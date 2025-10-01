@@ -63,7 +63,7 @@ class InvitationCodeAdmin(admin.ModelAdmin):
     """Admin for invitation code"""
     form = InvitationCodeAdminForm
     list_display = ('code', 'num_invites', 'owner', )
-    filter_horizontal = ('invited_users', )
+    # filter_horizontal = ('invited_users', )  # Disabled - this field uses a through model
     search_fields = ['created_by__email', 'owner__username']
 
 

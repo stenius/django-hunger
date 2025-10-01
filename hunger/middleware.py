@@ -1,7 +1,7 @@
 from __future__ import unicode_literals
-from django.utils import six
+import six
 from django.conf import settings
-from django.core.urlresolvers import reverse, resolve
+from django.urls import reverse, resolve
 from django.shortcuts import redirect
 from django.db.models import Q
 from hunger.models import InvitationCode, Invitation
@@ -36,7 +36,8 @@ class BetaMiddleware(object):
         The redirect when not in beta.
     """
 
-    def __init__(self):
+    def __init__(self, get_response):
+        self.get_response = get_response
         self.enable_beta = setting('HUNGER_ENABLE')
 
         self.always_allow_views = setting('HUNGER_ALWAYS_ALLOW_VIEWS')
@@ -44,7 +45,21 @@ class BetaMiddleware(object):
         self.redirect = setting('HUNGER_REDIRECT')
         self.allow_flatpages = setting('HUNGER_ALLOW_FLATPAGES')
 
+    def __call__(self, request):
+        # Get response from view (this will trigger URL resolution)
+        response = self.get_response(request)
+
+        # Process response after view
+        return self.process_response(request, response)
+
     def process_view(self, request, view_func, view_args, view_kwargs):
+        # Only process if we have actual view parameters (not called from __call__)
+        if view_func is None:
+            return None
+
+        return self._original_process_view(request, view_func, view_args, view_kwargs)
+
+    def _original_process_view(self, request, view_func, view_args, view_kwargs):
         if not self.enable_beta:
             return
 
@@ -84,7 +99,7 @@ class BetaMiddleware(object):
                 view_name in whitelisted_views):
             return
 
-        if not request.user.is_authenticated():
+        if not request.user.is_authenticated:
             # Ask anonymous user to log in if trying to access in-beta view
             try:
                 setting('HUNGER_LOGIN_URL')
@@ -178,7 +193,7 @@ class BetaMiddleware(object):
     @staticmethod
     def _get_view_name(request):
         """Return the urlpattern name."""
-        if hasattr(request, 'resolver_match'):
+        if hasattr(request, 'resolver_match') and request.resolver_match:
             # Django >= 1.5
             return request.resolver_match.view_name
 

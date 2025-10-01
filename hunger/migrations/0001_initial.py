@@ -34,7 +34,7 @@ class Migration(migrations.Migration):
                 ('max_invites', models.PositiveIntegerField(default=1, verbose_name='Max number of invitations')),
                 ('num_invites', models.PositiveIntegerField(default=1, verbose_name='Remaining invitations')),
                 ('invited_users', models.ManyToManyField(related_name='invitations', through='hunger.Invitation', to=settings.AUTH_USER_MODEL)),
-                ('owner', models.ForeignKey(related_name='created_invitations', blank=True, to=settings.AUTH_USER_MODEL, null=True)),
+                ('owner', models.ForeignKey(on_delete=models.CASCADE, related_name='created_invitations', blank=True, to=settings.AUTH_USER_MODEL, null=True)),
             ],
             options={
             },
@@ -43,13 +43,13 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='invitation',
             name='code',
-            field=models.ForeignKey(blank=True, to='hunger.InvitationCode', null=True),
+            field=models.ForeignKey(on_delete=models.CASCADE, blank=True, to='hunger.InvitationCode', null=True),
             preserve_default=True,
         ),
         migrations.AddField(
             model_name='invitation',
             name='user',
-            field=models.ForeignKey(blank=True, to=settings.AUTH_USER_MODEL, null=True),
+            field=models.ForeignKey(on_delete=models.CASCADE, blank=True, to=settings.AUTH_USER_MODEL, null=True),
             preserve_default=True,
         ),
         migrations.AlterUniqueTogether(
