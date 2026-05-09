@@ -1,14 +1,13 @@
-from __future__ import unicode_literals
-import six
 from django.conf import settings
 from django.urls import reverse, resolve
 from django.shortcuts import redirect
 from django.db.models import Q
+from django.utils.deprecation import MiddlewareMixin
 from hunger.models import InvitationCode, Invitation
 from hunger.utils import setting, now
 
 
-class BetaMiddleware(object):
+class BetaMiddleware(MiddlewareMixin):
     """
     Add this to your ``MIDDLEWARE_CLASSES`` make all views except for
     those in the account application require that a user be logged in.
@@ -36,8 +35,8 @@ class BetaMiddleware(object):
         The redirect when not in beta.
     """
 
-    def __init__(self, get_response):
-        self.get_response = get_response
+    def __init__(self, get_response=None):
+        super().__init__(get_response)
         self.enable_beta = setting('HUNGER_ENABLE')
 
         self.always_allow_views = setting('HUNGER_ALWAYS_ALLOW_VIEWS')
@@ -45,21 +44,7 @@ class BetaMiddleware(object):
         self.redirect = setting('HUNGER_REDIRECT')
         self.allow_flatpages = setting('HUNGER_ALLOW_FLATPAGES')
 
-    def __call__(self, request):
-        # Get response from view (this will trigger URL resolution)
-        response = self.get_response(request)
-
-        # Process response after view
-        return self.process_response(request, response)
-
     def process_view(self, request, view_func, view_args, view_kwargs):
-        # Only process if we have actual view parameters (not called from __call__)
-        if view_func is None:
-            return None
-
-        return self._original_process_view(request, view_func, view_args, view_kwargs)
-
-    def _original_process_view(self, request, view_func, view_args, view_kwargs):
         if not self.enable_beta:
             return
 
@@ -100,13 +85,13 @@ class BetaMiddleware(object):
             return
 
         if not request.user.is_authenticated:
-            # Ask anonymous user to log in if trying to access in-beta view
+            # Defer redirect — let view run so 404/500 responses pass through
             try:
-                setting('HUNGER_LOGIN_URL')
+                url = setting('HUNGER_LOGIN_URL')
             except KeyError:
-                return redirect(setting('LOGIN_URL'))
-            else:
-                return redirect(setting('HUNGER_LOGIN_URL'))
+                url = setting('LOGIN_URL')
+            request._hunger_redirect_url = url
+            return
 
         if request.user.is_staff:
             return
@@ -155,7 +140,9 @@ class BetaMiddleware(object):
             if not invitations:
                 invitation = Invitation(user=request.user)
                 invitation.save()
-            return redirect(self.redirect)
+            # Defer redirect — let view run so 404/500 responses pass through
+            request._hunger_redirect_url = self.redirect
+            return
 
         # No invitation, all we have is this cookie code
         try:
@@ -163,14 +150,16 @@ class BetaMiddleware(object):
                                               num_invites__gt=0)
         except InvitationCode.DoesNotExist:
             request._hunger_delete_cookie = True
-            return redirect(reverse('hunger-invalid', args=(cookie_code,)))
+            request._hunger_redirect_url = reverse('hunger-invalid', args=(cookie_code,))
+            return
 
         right_now = now()
         if code.private:
             # User is trying to use a valid private code, but has no
             # authority to use it (neither via username nor email)
             request._hunger_delete_cookie = True
-            return redirect(reverse('hunger-invalid', args=(cookie_code,)))
+            request._hunger_redirect_url = reverse('hunger-invalid', args=(cookie_code,))
+            return
         else:
             invitation = Invitation(user=request.user,
                                     code=code,
@@ -182,18 +171,23 @@ class BetaMiddleware(object):
         return
 
     def process_response(self, request, response):
+        # Check deferred beta redirect — let error and redirect responses through.
+        # Redirects (3xx) pass through so the destination can be evaluated on
+        # its own request; error responses (4xx/5xx) show proper error pages.
+        deferred_url = getattr(request, '_hunger_redirect_url', None)
+        if deferred_url is not None and response.status_code < 300:
+            response = redirect(deferred_url)
+
+        # Handle cookie deletion on the final response
         if getattr(request, '_hunger_delete_cookie', False):
-            if six.PY3:
-                code = 'hunger_code'
-            else:
-                code = u'hunger_code'.encode('utf-8')
-            response.delete_cookie(code)
+            response.delete_cookie('hunger_code')
+
         return response
 
     @staticmethod
     def _get_view_name(request):
         """Return the urlpattern name."""
-        if hasattr(request, 'resolver_match') and request.resolver_match:
+        if hasattr(request, 'resolver_match'):
             # Django >= 1.5
             return request.resolver_match.view_name
 
